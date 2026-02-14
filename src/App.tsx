@@ -24,6 +24,16 @@ type LegoSet = {
   thumb: string | null
 }
 
+type ThemeStat = {
+  theme: string
+  sets: number
+  value: number
+  earliestYear: number
+  latestYear: number
+}
+
+type SortOption = 'retail' | 'year' | 'name'
+
 const formatCurrency = (value?: number | null, currency = 'GBP') => {
   if (value === undefined || value === null || Number.isNaN(value)) return '—'
   return new Intl.NumberFormat('en-GB', {
@@ -36,6 +46,8 @@ const formatCurrency = (value?: number | null, currency = 'GBP') => {
 const preferredRetail = (set: LegoSet) =>
   set.retailPrice.uk ?? set.retailPrice.us ?? set.retailPrice.ca ?? set.retailPrice.de ?? null
 
+const yearFromSet = (set: LegoSet) => set.yearFrom || 0
+
 function App() {
   const [sets, setSets] = useState<LegoSet[]>([])
   const [loading, setLoading] = useState(true)
@@ -43,6 +55,8 @@ function App() {
   const [activeTheme, setActiveTheme] = useState<string>('All Themes')
   const [search, setSearch] = useState('')
   const [selectedSet, setSelectedSet] = useState<LegoSet | null>(null)
+  const [sortBy, setSortBy] = useState<SortOption>('retail')
+  const [suggestions, setSuggestions] = useState<LegoSet[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -69,16 +83,44 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!search.trim()) {
+      setSuggestions([])
+      return
+    }
+    const term = search.toLowerCase()
+    const matches = sets
+      .filter((set) => `${set.name} ${set.number}`.toLowerCase().includes(term))
+      .slice(0, 6)
+    setSuggestions(matches)
+  }, [search, sets])
+
   const themeStats = useMemo(() => {
-    const map = new Map<string, { theme: string; sets: number; value: number }>()
+    const map = new Map<string, ThemeStat>()
     for (const set of sets) {
       const key = set.theme || 'Misc'
-      const existing = map.get(key) ?? { theme: key, sets: 0, value: 0 }
+      const existing = map.get(key) ?? {
+        theme: key,
+        sets: 0,
+        value: 0,
+        earliestYear: Number.MAX_SAFE_INTEGER,
+        latestYear: 0,
+      }
       existing.sets += 1
       existing.value += preferredRetail(set) ?? 0
+      const year = yearFromSet(set)
+      if (year) {
+        existing.earliestYear = Math.min(existing.earliestYear, year)
+        existing.latestYear = Math.max(existing.latestYear, year)
+      }
       map.set(key, existing)
     }
-    return Array.from(map.values()).sort((a, b) => b.value - a.value)
+    return Array.from(map.values())
+      .map((stat) => ({
+        ...stat,
+        earliestYear: stat.earliestYear === Number.MAX_SAFE_INTEGER ? 0 : stat.earliestYear,
+      }))
+      .sort((a, b) => b.value - a.value)
   }, [sets])
 
   const overallStats = useMemo(() => {
@@ -97,6 +139,23 @@ function App() {
       return matchesTheme && matchesSearch
     })
   }, [activeTheme, search, sets])
+
+  const sortedSets = useMemo(() => {
+    const clone = [...filteredSets]
+    switch (sortBy) {
+      case 'year':
+        return clone.sort((a, b) => yearFromSet(b) - yearFromSet(a))
+      case 'name':
+        return clone.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+      case 'retail':
+      default:
+        return clone.sort((a, b) => (preferredRetail(b) ?? 0) - (preferredRetail(a) ?? 0))
+    }
+  }, [filteredSets, sortBy])
+
+  const activeThemeStat = activeTheme === 'All Themes'
+    ? null
+    : themeStats.find((stat) => stat.theme === activeTheme)
 
   if (loading) {
     return (
@@ -176,8 +235,35 @@ function App() {
         </div>
       </section>
 
+      {activeThemeStat && (
+        <section className="theme-detail">
+          <div>
+            <p className="eyebrow">Theme focus</p>
+            <h2>{activeThemeStat.theme}</h2>
+            <p className="meta">{activeThemeStat.sets} sets · {formatCurrency(activeThemeStat.value)} total retail</p>
+          </div>
+          <div className="theme-detail-stats">
+            <div>
+              <span>Earliest release</span>
+              <strong>{activeThemeStat.earliestYear || '—'}</strong>
+            </div>
+            <div>
+              <span>Latest release</span>
+              <strong>{activeThemeStat.latestYear || '—'}</strong>
+            </div>
+            <div>
+              <span>Avg retail</span>
+              <strong>{formatCurrency(activeThemeStat.value / activeThemeStat.sets)}</strong>
+            </div>
+          </div>
+          <button className="chip" onClick={() => setActiveTheme('All Themes')}>
+            Clear theme
+          </button>
+        </section>
+      )}
+
       <section className="filters">
-        <div>
+        <div className="search-block">
           <label htmlFor="search">Search sets</label>
           <input
             id="search"
@@ -186,12 +272,38 @@ function App() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          {suggestions.length > 0 && (
+            <ul className="suggestion-list">
+              {suggestions.map((set) => (
+                <li key={set.id}>
+                  <button
+                    onClick={() => {
+                      setSelectedSet(set)
+                      setSuggestions([])
+                      setSearch(set.name)
+                    }}
+                  >
+                    <strong>{set.name}</strong>
+                    <span>#{set.number} · {set.theme}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <p className="result-count">{filteredSets.length} sets</p>
+        <div className="sort-block">
+          <label htmlFor="sort">Sort by</label>
+          <select id="sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)}>
+            <option value="retail">Highest retail value</option>
+            <option value="year">Newest release</option>
+            <option value="name">Name (A–Z)</option>
+          </select>
+        </div>
+        <p className="result-count">{sortedSets.length} sets</p>
       </section>
 
       <section className="gallery">
-        {filteredSets.map((set) => (
+        {sortedSets.map((set) => (
           <article key={set.id} className="set-card" onClick={() => setSelectedSet(set)}>
             <div className="thumb">
               {set.thumb ? (
@@ -208,7 +320,7 @@ function App() {
             </div>
           </article>
         ))}
-        {filteredSets.length === 0 && <p className="empty">No sets match that search.</p>}
+        {sortedSets.length === 0 && <p className="empty">No sets match that search.</p>}
       </section>
 
       {selectedSet && (
@@ -246,6 +358,10 @@ function App() {
               <div>
                 <h5>Theme</h5>
                 <p>{selectedSet.theme} {selectedSet.subtheme ? `· ${selectedSet.subtheme}` : ''}</p>
+              </div>
+              <div>
+                <h5>Release year</h5>
+                <p>{selectedSet.yearFrom || '—'}</p>
               </div>
               <div>
                 <h5>Availability</h5>
