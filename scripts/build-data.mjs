@@ -1,11 +1,15 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { parse } from 'csv-parse/sync'
+import fetch from 'node-fetch'
 
 const WORKSPACE_ROOT = path.resolve('../')
 const CSV_PATH = path.join(WORKSPACE_ROOT, 'Brickset-mySets-owned.csv')
 const OUTPUT_DIR = path.resolve('./public')
 const OUTPUT_PATH = path.join(OUTPUT_DIR, 'sets.json')
+
+const SHEET_ID = process.env.TRANSFORMERS_SHEET_ID || process.env.VITE_TRANSFORMERS_SHEET_ID
+const SHEET_GID = process.env.VITE_TRANSFORMERS_SHEET_GID || '13501556'
 
 const toNumber = (value) => {
   if (!value) return null
@@ -19,8 +23,39 @@ const toInt = (value) => {
   return Number.isFinite(num) ? num : 0
 }
 
+const fetchSheetCsv = async (sheetId, gid) => {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
+  console.log(`TRANSFORMERS_SHEET_ID set — attempting to fetch public sheet CSV from: ${url}`)
+  try {
+    const res = await fetch(url, { timeout: 10000 })
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+    return await res.text()
+  } catch (err) {
+    console.error('Failed to fetch public Google Sheet CSV:', err.message)
+    return null
+  }
+}
+
 ;(async () => {
-  const csvRaw = await readFile(CSV_PATH, 'utf8')
+  let csvRaw
+
+  if (SHEET_ID) {
+    csvRaw = await fetchSheetCsv(SHEET_ID, SHEET_GID)
+    if (!csvRaw) {
+      console.warn('Falling back to local Brickset CSV due to fetch error')
+    }
+  }
+
+  if (!csvRaw) {
+    try {
+      csvRaw = await readFile(CSV_PATH, 'utf8')
+      console.log(`Read local CSV from ${CSV_PATH}`)
+    } catch (err) {
+      console.error('No CSV available — set TRANSFORMERS_SHEET_ID or ensure local Brickset CSV exists at', CSV_PATH)
+      process.exit(1)
+    }
+  }
+
   const records = parse(csvRaw, {
     columns: true,
     skip_empty_lines: true,
