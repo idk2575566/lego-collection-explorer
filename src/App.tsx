@@ -78,8 +78,7 @@ function App() {
         const res = await fetch(csvUrl)
         if (!res.ok) throw new Error('Failed to fetch sheet CSV')
         const text = await res.text()
-        const rows = text.split('
-').map((r) => r.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/))
+        const rows = text.split(/\r?\n/).map((r) => r.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/))
         const headers = rows[0].map((h) => h.trim().replace(/^"|"$/g, ''))
         const data = rows.slice(1).filter((r) => r.length >= 3).map((r, idx) => {
           const obj: any = {}
