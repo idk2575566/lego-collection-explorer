@@ -59,24 +59,63 @@ function App() {
   const [suggestions, setSuggestions] = useState<LegoSet[]>([])
 
   useEffect(() => {
+    // Load from a public Google Sheet (My Collection tab) if SHEET_ID env is provided,
+    // otherwise fall back to local sample data. Expects the sheet to be published or public.
     let cancelled = false
+    const sheetId = (import.meta.env.VITE_TRANSFORMERS_SHEET_ID as string) || '1jXpMbJ18-weODPfyR8KIqIYFNcEMIuL8vV5Z8O92I5g'
+    const gid = (import.meta.env.VITE_TRANSFORMERS_SHEET_GID as string) || '13501556' // My Collection
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
+
+    const parseCurrency = (v?: string) => {
+      if (!v) return null
+      const num = v.replace(/[^0-9.\-]/g, '')
+      const n = parseFloat(num)
+      return Number.isFinite(n) ? n : null
+    }
+
     const load = async () => {
       try {
-        const response = await fetch(`${import.meta.env.BASE_URL}sets.json`)
-        if (!response.ok) throw new Error('Failed to load sets.json')
-        const payload = (await response.json()) as LegoSet[]
+        const res = await fetch(csvUrl)
+        if (!res.ok) throw new Error('Failed to fetch sheet CSV')
+        const text = await res.text()
+        const rows = text.split('
+').map((r) => r.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/))
+        const headers = rows[0].map((h) => h.trim().replace(/^"|"$/g, ''))
+        const data = rows.slice(1).filter((r) => r.length >= 3).map((r, idx) => {
+          const obj: any = {}
+          headers.forEach((h, i) => (obj[h] = (r[i] || '').trim().replace(/^"|"$/g, '')))
+          // Map required fields
+          return {
+            id: String(idx + 1),
+            name: obj['Figure/Release'] || obj['Figure'] || obj['Title'] || obj['Figure/Name'] || 'Untitled',
+            number: obj['Studio Series ID'] || obj['SKU'] || '',
+            theme: obj['Class/Section'] || obj['Class'] || obj['Section'] || '',
+            faction: obj['Faction'] || obj['Source'] || obj['Description'] || '',
+            owned: (obj['Owned?'] || obj['Owned'] || '').toLowerCase().startsWith('y'),
+            retailPrice: { uk: parseCurrency(obj['RRP / Launch Retail (GBP)'] || obj['RRP'] || obj['Price (GBP)']) },
+            image: obj['Image'] || obj['Image URL'] || obj['Source'] || '',
+            thumb: obj['Image'] || obj['Thumb'] || obj['Image URL'] || '',
+            pieces: null,
+            minifigsCount: 0,
+            minifigs: [],
+            bricklink: { new: null, used: null },
+            skus: { us: null, eu: null, ean: null, upc: null },
+            dimensions: { width: null, height: null, depth: null, weight: null },
+          } as LegoSet
+        })
         if (!cancelled) {
-          setSets(payload)
+          setSets(data)
           setLoading(false)
         }
       } catch (err) {
         console.error(err)
         if (!cancelled) {
-          setError('Failed to load collection data. Refresh to try again.')
+          setError('Failed to load collection data from public sheet. Make sure the sheet is public or set VITE_TRANSFORMERS_SHEET_ID and GID correctly.')
           setLoading(false)
         }
       }
     }
+
     load()
     return () => {
       cancelled = true
