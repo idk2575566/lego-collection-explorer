@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { parse } from 'csv-parse/sync'
-import fetch from 'node-fetch'
+// Use global fetch (Node 18+). Avoid adding node-fetch dependency.
 
 const WORKSPACE_ROOT = path.resolve('../')
 const CSV_PATH = path.join(WORKSPACE_ROOT, 'Brickset-mySets-owned.csv')
