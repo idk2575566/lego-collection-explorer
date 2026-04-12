@@ -1,25 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
-type LegoSet = {
+type CollectionItem = {
   id: string
   name: string
   number: string
-  variant: string
   theme: string
-  subtheme: string | null
-  themeGroup: string | null
-  category: string | null
-  availability: string | null
-  packaging: string | null
-  pieces: number | null
-  minifigsCount: number
-  minifigs: string[]
-  yearFrom: number
-  retailPrice: { us: number | null; uk: number | null; ca: number | null; de: number | null }
-  bricklink: { new: number | null; used: number | null }
-  skus: { us: string | null; eu: string | null; ean: string | null; upc: string | null }
-  dimensions: { width: number | null; height: number | null; depth: number | null; weight: number | null }
+  faction: string
+  retailPrice: { uk: number | null }
   image: string | null
   thumb: string | null
 }
@@ -28,11 +16,9 @@ type ThemeStat = {
   theme: string
   sets: number
   value: number
-  earliestYear: number
-  latestYear: number
 }
 
-type SortOption = 'retail' | 'year' | 'name'
+type SortOption = 'retail' | 'name' | 'release'
 
 const formatCurrency = (value?: number | null, currency = 'GBP') => {
   if (value === undefined || value === null || Number.isNaN(value)) return '—'
@@ -43,27 +29,22 @@ const formatCurrency = (value?: number | null, currency = 'GBP') => {
   }).format(value)
 }
 
-const preferredRetail = (set: LegoSet) =>
-  set.retailPrice.uk ?? set.retailPrice.us ?? set.retailPrice.ca ?? set.retailPrice.de ?? null
-
-const yearFromSet = (set: LegoSet) => set.yearFrom || 0
+const preferredRetail = (set: CollectionItem) => set.retailPrice.uk ?? null
 
 function App() {
-  const [sets, setSets] = useState<LegoSet[]>([])
+  const [sets, setSets] = useState<CollectionItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTheme, setActiveTheme] = useState<string>('All Themes')
   const [search, setSearch] = useState('')
-  const [selectedSet, setSelectedSet] = useState<LegoSet | null>(null)
+  const [selectedSet, setSelectedSet] = useState<CollectionItem | null>(null)
   const [sortBy, setSortBy] = useState<SortOption>('retail')
-  const [suggestions, setSuggestions] = useState<LegoSet[]>([])
+  const [suggestions, setSuggestions] = useState<CollectionItem[]>([])
 
   useEffect(() => {
-    // Load from a public Google Sheet (My Collection tab) if SHEET_ID env is provided,
-    // otherwise fall back to local sample data. Expects the sheet to be published or public.
     let cancelled = false
     const sheetId = (import.meta.env.VITE_TRANSFORMERS_SHEET_ID as string) || '1jXpMbJ18-weODPfyR8KIqIYFNcEMIuL8vV5Z8O92I5g'
-    const gid = (import.meta.env.VITE_TRANSFORMERS_SHEET_GID as string) || '13501556' // My Collection
+    const gid = (import.meta.env.VITE_TRANSFORMERS_SHEET_GID as string) || '1360451326' // Site Source Clean
     const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
 
     const parseCurrency = (v?: string) => {
@@ -80,28 +61,20 @@ function App() {
         const text = await res.text()
         const rows = text.split(/\r?\n/).map((r) => r.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/))
         const headers = rows[0].map((h) => h.trim().replace(/^"|"$/g, ''))
-        const data = rows.slice(1).filter((r) => r.length >= 3).map((r, idx) => {
+        const data = rows.slice(1).filter((r) => r.length >= 2).map((r, idx) => {
           const obj: any = {}
           headers.forEach((h, i) => (obj[h] = (r[i] || '').trim().replace(/^"|"$/g, '')))
-          // Map required fields
           return {
             id: String(idx + 1),
-            name: obj['Figure/Release'] || obj['Figure'] || obj['Title'] || obj['Figure/Name'] || 'Untitled',
-            number: obj['Studio Series ID'] || obj['SKU'] || '',
-            theme: obj['Class/Section'] || obj['Class'] || obj['Section'] || '',
-            faction: obj['Faction'] || obj['Source'] || obj['Description'] || '',
-            owned: (obj['Owned?'] || obj['Owned'] || '').toLowerCase().startsWith('y'),
+            name: obj['Figure'] || obj['Figure/Release'] || 'Untitled',
+            number: obj['Release Order'] || '',
+            theme: obj['Faction'] || 'Unknown',
+            faction: obj['Faction'] || 'Unknown',
             retailPrice: { uk: parseCurrency(obj['RRP / Launch Retail (GBP)'] || obj['RRP'] || obj['Price (GBP)']) },
-            image: obj['Image'] || obj['Image URL'] || obj['Source'] || '',
-            thumb: obj['Image'] || obj['Thumb'] || obj['Image URL'] || '',
-            pieces: null,
-            minifigsCount: 0,
-            minifigs: [],
-            bricklink: { new: null, used: null },
-            skus: { us: null, eu: null, ean: null, upc: null },
-            dimensions: { width: null, height: null, depth: null, weight: null },
-          } as LegoSet
-        })
+            image: obj['Image URL'] || obj['Image'] || '',
+            thumb: obj['Image URL'] || obj['Thumb'] || obj['Image'] || '',
+          } as CollectionItem
+        }).filter((item) => item.image)
         if (!cancelled) {
           setSets(data)
           setLoading(false)
@@ -109,7 +82,7 @@ function App() {
       } catch (err) {
         console.error(err)
         if (!cancelled) {
-          setError('Failed to load collection data from public sheet. Make sure the sheet is public or set VITE_TRANSFORMERS_SHEET_ID and GID correctly.')
+          setError('Failed to load Transformers collection data from the clean sheet tab.')
           setLoading(false)
         }
       }
@@ -141,31 +114,18 @@ function App() {
         theme: key,
         sets: 0,
         value: 0,
-        earliestYear: Number.MAX_SAFE_INTEGER,
-        latestYear: 0,
       }
       existing.sets += 1
       existing.value += preferredRetail(set) ?? 0
-      const year = yearFromSet(set)
-      if (year) {
-        existing.earliestYear = Math.min(existing.earliestYear, year)
-        existing.latestYear = Math.max(existing.latestYear, year)
-      }
       map.set(key, existing)
     }
     return Array.from(map.values())
-      .map((stat) => ({
-        ...stat,
-        earliestYear: stat.earliestYear === Number.MAX_SAFE_INTEGER ? 0 : stat.earliestYear,
-      }))
       .sort((a, b) => b.value - a.value)
   }, [sets])
 
   const overallStats = useMemo(() => {
     const totalRetail = sets.reduce((sum, set) => sum + (preferredRetail(set) ?? 0), 0)
-    const totalBricklinkNew = sets.reduce((sum, set) => sum + (set.bricklink.new ?? 0), 0)
-    const totalPieces = sets.reduce((sum, set) => sum + (set.pieces ?? 0), 0)
-    return { totalRetail, totalBricklinkNew, totalPieces }
+    return { totalRetail }
   }, [sets])
 
   const filteredSets = useMemo(() => {
@@ -181,8 +141,8 @@ function App() {
   const sortedSets = useMemo(() => {
     const clone = [...filteredSets]
     switch (sortBy) {
-      case 'year':
-        return clone.sort((a, b) => yearFromSet(b) - yearFromSet(a))
+      case 'release':
+        return clone.sort((a, b) => Number(a.number || 0) - Number(b.number || 0))
       case 'name':
         return clone.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
       case 'retail':
@@ -215,11 +175,10 @@ function App() {
     <div className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">Jarvis Labs · LEGO Explorer</p>
-          <h1>Grant&apos;s LEGO Collection Explorer</h1>
+          <p className="eyebrow">Jarvis Labs · Transformers Explorer</p>
+          <h1>Grant&apos;s Transformers Collection</h1>
           <p className="lede">
-            Browse {sets.length.toLocaleString()} sets spanning {themeStats.length} themes. Tap a theme to filter, then
-            dive into the set detail panel for minifigs, pricing, and trivia.
+            Browse {sets.length.toLocaleString()} figures. Filter by faction, search by name, and tap a card for a larger view.
           </p>
         </div>
         <div className="badge">
@@ -230,33 +189,28 @@ function App() {
 
       <section className="stats-grid">
         <article>
-          <p>BrickLink (New)</p>
-          <h2>{formatCurrency(overallStats.totalBricklinkNew)}</h2>
-          <small>Aggregate sold listings across the collection.</small>
+          <p>Total Retail</p>
+          <h2>{formatCurrency(overallStats.totalRetail)}</h2>
+          <small>Based on launch retail prices in GBP.</small>
         </article>
         <article>
-          <p>Total Pieces</p>
-          <h2>{overallStats.totalPieces.toLocaleString()}</h2>
-          <small>Equivalent to ~{Math.round(overallStats.totalPieces / 1000)}k bricks.</small>
-        </article>
-        <article>
-          <p>Average Price / Set</p>
+          <p>Average Price / Figure</p>
           <h2>{formatCurrency(overallStats.totalRetail / sets.length)}</h2>
-          <small>Based on preferred retail currency per set.</small>
+          <small>Across the current clean Transformers dataset.</small>
         </article>
       </section>
 
       <section className="theme-section">
         <div className="section-heading">
-          <h3>Theme spotlight</h3>
-          <p>Tap to filter. Size indicates RRP footprint.</p>
+          <h3>Faction filter</h3>
+          <p>Tap to filter the collection.</p>
         </div>
         <div className="theme-grid">
           <button
             className={activeTheme === 'All Themes' ? 'theme-card active' : 'theme-card'}
             onClick={() => setActiveTheme('All Themes')}
           >
-            <strong>All Themes</strong>
+            <strong>All Figures</strong>
             <span>{sets.length} sets</span>
           </button>
           {themeStats.slice(0, 15).map((theme) => (
@@ -278,17 +232,9 @@ function App() {
           <div>
             <p className="eyebrow">Theme focus</p>
             <h2>{activeThemeStat.theme}</h2>
-            <p className="meta">{activeThemeStat.sets} sets · {formatCurrency(activeThemeStat.value)} total retail</p>
+            <p className="meta">{activeThemeStat.sets} figures · {formatCurrency(activeThemeStat.value)} total retail</p>
           </div>
           <div className="theme-detail-stats">
-            <div>
-              <span>Earliest release</span>
-              <strong>{activeThemeStat.earliestYear || '—'}</strong>
-            </div>
-            <div>
-              <span>Latest release</span>
-              <strong>{activeThemeStat.latestYear || '—'}</strong>
-            </div>
             <div>
               <span>Avg retail</span>
               <strong>{formatCurrency(activeThemeStat.value / activeThemeStat.sets)}</strong>
@@ -302,11 +248,11 @@ function App() {
 
       <section className="filters">
         <div className="search-block">
-          <label htmlFor="search">Search sets</label>
+          <label htmlFor="search">Search figures</label>
           <input
             id="search"
             type="search"
-            placeholder="E.g. Falcon, 75313, minifig"
+            placeholder="E.g. Optimus, Soundwave, 86"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -322,7 +268,7 @@ function App() {
                     }}
                   >
                     <strong>{set.name}</strong>
-                    <span>#{set.number} · {set.theme}</span>
+                    <span>#{set.number} · {set.faction}</span>
                   </button>
                 </li>
               ))}
@@ -333,11 +279,11 @@ function App() {
           <label htmlFor="sort">Sort by</label>
           <select id="sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)}>
             <option value="retail">Highest retail value</option>
-            <option value="year">Newest release</option>
+            <option value="release">Release order</option>
             <option value="name">Name (A–Z)</option>
           </select>
         </div>
-        <p className="result-count">{sortedSets.length} sets</p>
+        <p className="result-count">{sortedSets.length} figures</p>
       </section>
 
       <section className="gallery">
@@ -353,12 +299,12 @@ function App() {
             <div>
               <p className="set-theme">{set.theme}</p>
               <h4>{set.name}</h4>
-              <p className="meta">#{set.number} · {set.pieces?.toLocaleString()} pcs</p>
+              <p className="meta">Release #{set.number}</p>
               <p className="price">{formatCurrency(preferredRetail(set))}</p>
             </div>
           </article>
         ))}
-        {sortedSets.length === 0 && <p className="empty">No sets match that search.</p>}
+        {sortedSets.length === 0 && <p className="empty">No figures match that search.</p>}
       </section>
 
       {selectedSet && (
@@ -374,19 +320,11 @@ function App() {
               <div>
                 <p className="set-theme">{selectedSet.theme}</p>
                 <h2>{selectedSet.name}</h2>
-                <p className="meta">Set #{selectedSet.number} · {selectedSet.pieces?.toLocaleString()} pieces</p>
+                <p className="meta">Release #{selectedSet.number}</p>
                 <div className="price-grid">
                   <div>
                     <span>Retail</span>
                     <strong>{formatCurrency(preferredRetail(selectedSet))}</strong>
-                  </div>
-                  <div>
-                    <span>BrickLink (New)</span>
-                    <strong>{formatCurrency(selectedSet.bricklink.new)}</strong>
-                  </div>
-                  <div>
-                    <span>BrickLink (Used)</span>
-                    <strong>{formatCurrency(selectedSet.bricklink.used)}</strong>
                   </div>
                 </div>
               </div>
@@ -394,37 +332,13 @@ function App() {
 
             <div className="info-grid">
               <div>
-                <h5>Theme</h5>
-                <p>{selectedSet.theme} {selectedSet.subtheme ? `· ${selectedSet.subtheme}` : ''}</p>
+                <h5>Faction</h5>
+                <p>{selectedSet.faction || '—'}</p>
               </div>
               <div>
-                <h5>Release year</h5>
-                <p>{selectedSet.yearFrom || '—'}</p>
+                <h5>Release order</h5>
+                <p>{selectedSet.number || '—'}</p>
               </div>
-              <div>
-                <h5>Availability</h5>
-                <p>{selectedSet.availability ?? '—'}</p>
-              </div>
-              <div>
-                <h5>Packaging</h5>
-                <p>{selectedSet.packaging ?? '—'}</p>
-              </div>
-            </div>
-
-            <div>
-              <h3>Minifig lineup ({selectedSet.minifigsCount})</h3>
-              {selectedSet.minifigs.length === 0 ? (
-                <p className="meta">No minifigs included.</p>
-              ) : (
-                <ul className="minifig-grid">
-                  {selectedSet.minifigs.map((code) => (
-                    <li key={code}>
-                      <div className="minifig-chip">{code}</div>
-                      <span>Character code</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
           </div>
         </div>
