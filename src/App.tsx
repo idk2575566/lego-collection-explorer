@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import builtSets from '../public/sets.json'
 
 type CollectionItem = {
   id: string
@@ -42,55 +43,13 @@ function App() {
   const [suggestions, setSuggestions] = useState<CollectionItem[]>([])
 
   useEffect(() => {
-    let cancelled = false
-    const sheetId = (import.meta.env.VITE_TRANSFORMERS_SHEET_ID as string) || '1jXpMbJ18-weODPfyR8KIqIYFNcEMIuL8vV5Z8O92I5g'
-    const gid = (import.meta.env.VITE_TRANSFORMERS_SHEET_GID as string) || '1360451326' // Site Source Clean
-    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
-
-    const parseCurrency = (v?: string) => {
-      if (!v) return null
-      const num = v.replace(/[^0-9.\-]/g, '')
-      const n = parseFloat(num)
-      return Number.isFinite(n) ? n : null
-    }
-
-    const load = async () => {
-      try {
-        const res = await fetch(csvUrl)
-        if (!res.ok) throw new Error('Failed to fetch sheet CSV')
-        const text = await res.text()
-        const rows = text.split(/\r?\n/).map((r) => r.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/))
-        const headers = rows[0].map((h) => h.trim().replace(/^"|"$/g, ''))
-        const data = rows.slice(1).filter((r) => r.length >= 2).map((r, idx) => {
-          const obj: any = {}
-          headers.forEach((h, i) => (obj[h] = (r[i] || '').trim().replace(/^"|"$/g, '')))
-          return {
-            id: String(idx + 1),
-            name: obj['Figure'] || obj['Figure/Release'] || 'Untitled',
-            number: obj['Release Order'] || '',
-            theme: obj['Faction'] || 'Unknown',
-            faction: obj['Faction'] || 'Unknown',
-            retailPrice: { uk: parseCurrency(obj['RRP / Launch Retail (GBP)'] || obj['RRP'] || obj['Price (GBP)']) },
-            image: obj['Image URL'] || obj['Image'] || '',
-            thumb: obj['Image URL'] || obj['Thumb'] || obj['Image'] || '',
-          } as CollectionItem
-        }).filter((item) => item.image)
-        if (!cancelled) {
-          setSets(data)
-          setLoading(false)
-        }
-      } catch (err) {
-        console.error(err)
-        if (!cancelled) {
-          setError('Failed to load Transformers collection data from the clean sheet tab.')
-          setLoading(false)
-        }
-      }
-    }
-
-    load()
-    return () => {
-      cancelled = true
+    try {
+      setSets((builtSets as CollectionItem[]).filter((item) => item.image))
+      setLoading(false)
+    } catch (err) {
+      console.error(err)
+      setError('Failed to load built Transformers collection data.')
+      setLoading(false)
     }
   }, [])
 
